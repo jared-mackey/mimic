@@ -333,7 +333,7 @@ defmodule Mimic do
     * `module` - the name of the module to copy.
 
   """
-  @spec copy(module()) :: :ok
+  @spec copy(module()) :: :ok | no_return
   def copy(module) do
     case Code.ensure_compiled(module) do
       {:error, _} ->
@@ -342,7 +342,7 @@ defmodule Mimic do
 
       {:module, module} ->
         Mimic.Module.replace!(module)
-        ExUnit.after_suite(fn _ -> Server.reset(module) end)
+        ExUnit.after_suite(fn _ -> Mimic.Module.reset(module) end)
 
         :ok
     end

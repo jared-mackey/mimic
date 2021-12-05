@@ -1,7 +1,9 @@
 defmodule Mimic.Server do
+  @moduledoc false
+
   use GenServer
   alias Mimic.Cover
-  @moduledoc false
+  alias Mimic.ModuleLoader
 
   @beam_code_table_name Mimic.Server.BeamCode
 
@@ -60,20 +62,16 @@ defmodule Mimic.Server do
     GenServer.cast(__MODULE__, {:exit, pid})
   end
 
-  def store_filename_and_cover_data(module, filename, cover_data) do
-    GenServer.cast(__MODULE__, {:store_filename_and_cover_data, module, filename, cover_data})
+  def fetch_beam_code(module) do
+    :ets.lookup(@beam_code_table_name, module)
   end
 
   def store_beam_code(module, beam_code, compiler_options) do
-    GenServer.call(__MODULE__, {:store_beam_code, module, beam_code, compiler_options})
+    :ets.insert_new(@beam_code_table_name, {module, beam_code, compiler_options})
   end
 
-  def reset(module) do
-    GenServer.call(__MODULE__, {:reset, module}, :infinity)
-  end
-
-  def rename_module(module) do
-    GenServer.call(__MODULE__, {:rename_module, module}, 60_000)
+  def delete_beam_code(module) do
+    GenServer.call(__MODULE__, {:delete_beam_code, module})
   end
 
   def apply(module, fn_name, args) do
@@ -119,7 +117,7 @@ defmodule Mimic.Server do
 
   defp ensure_original_module_renamed!(module) do
     if :ets.member(@beam_code_table_name, module) do
-      rename_module(module)
+      ModuleLoader.rename_module(module)
     end
   end
 
@@ -153,18 +151,13 @@ defmodule Mimic.Server do
 
   def init([]) do
     :ets.new(__MODULE__, [:named_table, :protected, :set])
-    :ets.new(@beam_code_table_name, [:named_table, :protected, :set, {:read_concurrency, true}])
+    :ets.new(@beam_code_table_name, [:named_table, :public, :set, {:read_concurrency, true}])
     state = do_set_private_mode(%State{})
     {:ok, state}
   end
 
   def handle_cast({:exit, pid}, state) do
     {:noreply, clear_data_from_pid(pid, state)}
-  end
-
-  def handle_cast({:store_filename_and_cover_data, module, filename, cover_data}, state) do
-    cover_data = Map.put(state.cover_data, module, {filename, cover_data})
-    {:noreply, %{state | cover_data: cover_data}}
   end
 
   def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
@@ -346,40 +339,8 @@ defmodule Mimic.Server do
     {:reply, :ok, %{state | verify_on_exit: MapSet.put(state.verify_on_exit, pid)}}
   end
 
-  def handle_call({:reset, module}, _from, state) do
-    case state.cover_data[module] do
-      {filename, cover_data} ->
-        Cover.replace_cover_data!(module, filename, cover_data)
-
-      _ ->
-        Mimic.Module.clear!(module)
-
-        module
-        |> Mimic.Module.original()
-        |> Mimic.Module.clear!()
-    end
-
-    cover_data = Map.delete(state.cover_data, module)
-
-    {:reply, :ok, %{state | cover_data: cover_data}}
-  end
-
-  def handle_call({:rename_module, module}, _from, state) do
-    case :ets.lookup(@beam_code_table_name, module) do
-      [{^module, beam_code, compiler_options}] ->
-        Mimic.Module.rename_module(module, beam_code, compiler_options)
-        :ets.delete(@beam_code_table_name, module)
-
-      _ ->
-        :ok
-    end
-
-    {:reply, :ok, state}
-  end
-
-  def handle_call({:store_beam_code, module, beam_code, compiler_options}, _from, state) do
-    :ets.insert_new(@beam_code_table_name, {module, beam_code, compiler_options})
-
+  def handle_call({:delete_beam_code, module}, _from, state) do
+    :ets.delete(@beam_code_table_name, module)
     {:reply, :ok, state}
   end
 

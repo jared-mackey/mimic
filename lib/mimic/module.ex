@@ -1,5 +1,5 @@
 defmodule Mimic.Module do
-  alias Mimic.{Cover, Server}
+  alias Mimic.{Cover, Server, ModuleLoader}
   @moduledoc false
 
   def original(module), do: "#{module}.Mimic.Original.Module" |> String.to_atom()
@@ -11,16 +11,18 @@ defmodule Mimic.Module do
   end
 
   def replace!(module) do
+    {:ok, _} = DynamicSupervisor.start_child(Mimic.Modules, {ModuleLoader, module})
+
     case :cover.is_compiled(module) do
       {:file, filename} ->
         {:ok, cover_data_path} = Cover.export_cover_data!(module)
-        Server.store_filename_and_cover_data(module, filename, cover_data_path)
+        ModuleLoader.store_filename_and_cover_data(module, filename, cover_data_path)
 
       false ->
         :ok
     end
 
-    Server.store_beam_code(module, beam_code(module), compiler_options(module))
+    ModuleLoader.store_beam_code(module, beam_code(module), compiler_options(module))
 
     Code.compiler_options(ignore_module_conflict: true)
     create_mock(module)
@@ -28,6 +30,8 @@ defmodule Mimic.Module do
 
     :ok
   end
+
+  def reset(module), do: ModuleLoader.reset(module)
 
   def rename_module(module, beam_code, compiler_options) do
     new_module = original(module)
