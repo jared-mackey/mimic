@@ -31,7 +31,15 @@ defmodule Mimic.Module do
     :ok
   end
 
-  def reset(module), do: ModuleLoader.reset(module)
+  def reset(module) do
+    if copied?(module) do
+      ModuleLoader.reset(module)
+    end
+  end
+
+  def copied?(module) do
+    function_exported?(module, :__mimic_info__, 0)
+  end
 
   def rename_module(module, beam_code, compiler_options) do
     new_module = original(module)

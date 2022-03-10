@@ -120,14 +120,11 @@ defmodule Mimic do
   @spec stub(module(), atom(), function()) :: module
   def stub(module, function_name, function) do
     arity = :erlang.fun_info(function)[:arity]
-    raise_if_not_copied!(module)
     raise_if_not_exported_function!(module, function_name, arity)
 
     module
     |> Server.stub(function_name, arity, function)
-    |> validate_server_response(
-      "Stub cannot be called by the current process. Only the global owner is allowed."
-    )
+    |> validate_server_response(:stub)
   end
 
   @doc """
@@ -153,13 +150,9 @@ defmodule Mimic do
   """
   @spec stub(module()) :: module()
   def stub(module) do
-    raise_if_not_copied!(module)
-
     module
     |> Server.stub()
-    |> validate_server_response(
-      "Stub cannot be called by the current process. Only the global owner is allowed."
-    )
+    |> validate_server_response(:stub)
   end
 
   @doc """
@@ -202,14 +195,11 @@ defmodule Mimic do
       when is_atom(module) and is_atom(fn_name) and is_integer(num_calls) and num_calls >= 1 and
              is_function(func) do
     arity = :erlang.fun_info(func)[:arity]
-    raise_if_not_copied!(module)
     raise_if_not_exported_function!(module, fn_name, arity)
 
     module
     |> Server.expect(fn_name, arity, num_calls, func)
-    |> validate_server_response(
-      "Expect cannot be called by the current process. Only the global owner is allowed."
-    )
+    |> validate_server_response(:expect)
   end
 
   @doc """
@@ -238,14 +228,11 @@ defmodule Mimic do
     arity = fun_info[:arity]
     module = fun_info[:module]
     fn_name = fun_info[:name]
-    raise_if_not_copied!(module)
     raise_if_not_exported_function!(module, fn_name, arity)
 
     module
     |> Server.expect(fn_name, arity, 0, function)
-    |> validate_server_response(
-      "Reject cannot be called by the current process. Only the global owner is allowed."
-    )
+    |> validate_server_response(:reject)
   end
 
   @doc """
@@ -272,15 +259,12 @@ defmodule Mimic do
   """
   @spec reject(module, atom, non_neg_integer) :: module
   def reject(module, function_name, arity) do
-    raise_if_not_copied!(module)
     raise_if_not_exported_function!(module, function_name, arity)
     func = :erlang.make_fun(module, function_name, arity)
 
     module
     |> Server.expect(function_name, arity, 0, func)
-    |> validate_server_response(
-      "Reject cannot be called by the current process. Only the global owner is allowed."
-    )
+    |> validate_server_response(:reject)
   end
 
   @doc """
@@ -322,7 +306,7 @@ defmodule Mimic do
   def allow(module, owner_pid, allowed_pid) do
     module
     |> Server.allow(owner_pid, allowed_pid)
-    |> validate_server_response("Allow must not be called when mode is global.")
+    |> validate_server_response(:allow)
   end
 
   @doc """
@@ -341,7 +325,7 @@ defmodule Mimic do
               "Module #{inspect(module)} is not available"
 
       {:module, module} ->
-        Mimic.Module.replace!(module)
+        Mimic.Server.mark_to_copy(module)
         ExUnit.after_suite(fn _ -> Mimic.Module.reset(module) end)
 
         :ok
@@ -428,15 +412,8 @@ defmodule Mimic do
   @doc "Returns the current mode (`:global` or `:private`)"
   @spec mode() :: :private | :global
   def mode do
-    Server.get_mode()
-    |> validate_server_response("Couldn't get the current mode.")
-  end
-
-  defp raise_if_not_copied!(module) do
-    unless function_exported?(module, :__mimic_info__, 0) do
-      raise ArgumentError,
-            "Module #{inspect(module)} has not been copied.  See docs for Mimic.copy/1"
-    end
+    {:ok, mode} = Server.get_mode()
+    mode
   end
 
   defp raise_if_not_exported_function!(module, fn_name, arity) do
@@ -445,8 +422,34 @@ defmodule Mimic do
     end
   end
 
-  defp validate_server_response({:ok, module}, _), do: module
+  defp validate_server_response({:ok, module}, _action), do: module
 
-  defp validate_server_response({:error, _}, error_message),
-    do: raise(ArgumentError, error_message)
+  defp validate_server_response({:error, :not_global_owner}, :reject) do
+    raise ArgumentError,
+          "Reject cannot be called by the current process. Only the global owner is allowed."
+  end
+
+  defp validate_server_response({:error, :not_global_owner}, :expect) do
+    raise ArgumentError,
+          "Expect cannot be called by the current process. Only the global owner is allowed."
+  end
+
+  defp validate_server_response({:error, :not_global_owner}, :stub) do
+    raise ArgumentError,
+          "Stub cannot be called by the current process. Only the global owner is allowed."
+  end
+
+  defp validate_server_response({:error, :not_global_owner}, :allow) do
+    raise ArgumentError,
+          "Allow cannot be called by the current process. Only the global owner is allowed."
+  end
+
+  defp validate_server_response({:error, :global}, :allow) do
+    raise ArgumentError, "Allow must not be called when mode is global."
+  end
+
+  defp validate_server_response({:error, {:module_not_copied, module}}, _action) do
+    raise ArgumentError,
+          "Module #{inspect(module)} has not been copied.  See docs for Mimic.copy/1"
+  end
 end
