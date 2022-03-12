@@ -32,9 +32,9 @@ defmodule Mimic.Module do
   end
 
   def reset(module) do
-    if copied?(module) do
-      ModuleLoader.reset(module)
-    end
+    # if copied?(module) do
+    Server.reset(module)
+    # end
   end
 
   def copied?(module) do

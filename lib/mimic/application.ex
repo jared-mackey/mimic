@@ -7,8 +7,8 @@ defmodule Mimic.Application do
     Cover.export_private_functions()
 
     children = [
-      Server,
-      {DynamicSupervisor, strategy: :one_for_one, name: Mimic.Modules}
+      {DynamicSupervisor, strategy: :one_for_one, name: Mimic.Modules},
+      Server
     ]
 
     Supervisor.start_link(children, name: Mimic.Supervisor, strategy: :one_for_one)

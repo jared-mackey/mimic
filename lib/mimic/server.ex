@@ -14,12 +14,17 @@ defmodule Mimic.Server do
               global_pid: nil,
               stubs: %{},
               expectations: %{},
-              cover_data: %{}
+              cover_data: %{},
+              reset_tasks: %{}
   end
 
   defmodule Expectation do
     @moduledoc false
     defstruct func: nil, num_applied_calls: 0, num_calls: nil
+  end
+
+  def reset(module) do
+    GenServer.call(__MODULE__, {:reset, module}, :infinity)
   end
 
   def mark_to_copy(module) do
@@ -173,6 +178,13 @@ defmodule Mimic.Server do
       end
 
     {:noreply, new_state}
+  end
+
+  def handle_info({ref, :ok}, state) do
+    IO.inspect([ref, state.reset_tasks], label: :tasks)
+    reset_tasks = Map.delete(state.reset_tasks, ref)
+
+    {:noreply, %{state | reset_tasks: reset_tasks}}
   end
 
   def handle_info(msg, state) do
@@ -366,6 +378,40 @@ defmodule Mimic.Server do
   def handle_call({:delete_beam_code, module}, _from, state) do
     :ets.delete(@beam_code_table_name, module)
     {:reply, :ok, state}
+  end
+
+  def handle_call({:reset, module}, _from, state) do
+    IO.puts("Reset #{module}")
+    state = %{state | modules_to_be_copied: MapSet.delete(state.modules_to_be_copied, module)}
+
+    if Mimic.Module.copied?(module) do
+      task =
+        Task.async(fn ->
+          ModuleLoader.reset(module)
+        end)
+
+      tasks = Map.put(state.reset_tasks, task.ref, task)
+
+      # All modules have been reset. We should await all tasks now
+      if MapSet.new() == state.modules_to_be_copied do
+        tasks
+        |> Map.values()
+        |> Task.await_many(60_000)
+        |> ensure_ok!
+
+        {:reply, :ok, %{state | reset_tasks: %{}}}
+      else
+        {:reply, :ok, %{state | reset_tasks: tasks}}
+      end
+    else
+      {:reply, :ok, state}
+    end
+  end
+
+  defp ensure_ok!(results) do
+    if Enum.any?(results, &(&1 != :ok)) do
+      raise RuntimeError, "Failed to Reset"
+    end
   end
 
   defp ensure_module_copied(module, state) do
